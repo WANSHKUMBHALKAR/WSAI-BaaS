@@ -19,6 +19,8 @@ node_modules/
 # Build
 dist/
 build/
+.next/
+frontend/.next/
 
 # OS
 .DS_Store
