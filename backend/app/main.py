@@ -1,6 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+import logging
+import time
+import threading
+from typing import Dict
+import asyncio
+from urllib.parse import urlparse
+from sqlalchemy import text
+
+from app.core.config import settings, ensure_production_settings
 from app.auth.router import router as auth_router
 from app.api.gateway import router as gateway_router
 from app.api.rag import router as rag_router
@@ -15,6 +26,22 @@ from app.api.analytics import router as analytics_router
 from app.database.session import Base, engine
 from app.models import *
 
+# Structured JSON logging with fallback
+try:
+    from pythonjsonlogger import jsonlogger
+
+    handler = logging.StreamHandler()
+    formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.handlers = []
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+    logger = logging.getLogger(__name__)
+except Exception:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -22,13 +49,128 @@ app = FastAPI(
     description="WSAI BaaS — AI Backend-as-a-Service Platform",
 )
 
+
+# Simple security headers middleware
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Permissions-Policy"] = "geolocation=()"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return resp
+
+
+# Basic in-memory rate limiter (per-IP sliding window)
+class RateLimiter:
+    def __init__(self, calls: int = 60, period: int = 60):
+        self.calls = calls
+        self.period = period
+        self.lock = threading.Lock()
+        self.store: Dict[str, list[float]] = {}
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.time()
+        with self.lock:
+            q = self.store.setdefault(key, [])
+            # drop old
+            while q and q[0] <= now - self.period:
+                q.pop(0)
+            if len(q) >= self.calls:
+                return False
+            q.append(now)
+            return True
+
+
+class RedisRateLimiter:
+    """Simple Redis-backed fixed-window limiter using INCR+EXPIRE.
+
+    This is production-friendly and performs a single INCR command per request.
+    It falls back to the in-memory limiter if Redis is unavailable.
+    """
+    def __init__(self, redis_url: str | None, calls: int = 300, period: int = 60):
+        self.redis_url = redis_url
+        self.calls = calls
+        self.period = period
+        self._client = None
+
+    async def _get_client(self):
+        if self._client is not None:
+            return self._client
+        if not self.redis_url:
+            raise RuntimeError("No REDIS_URL configured")
+        try:
+            import redis.asyncio as aioredis
+
+            self._client = await aioredis.from_url(self.redis_url, decode_responses=True)
+            return self._client
+        except Exception:
+            self._client = None
+            raise
+
+    async def is_allowed(self, key: str) -> bool:
+        """Return True if allowed, False if rate limit exceeded."""
+        try:
+            client = await self._get_client()
+            rkey = f"rl:{key}"
+            # INCR and set expiry if first increment
+            cur = await client.incr(rkey)
+            if cur == 1:
+                await client.expire(rkey, self.period)
+            return cur <= self.calls
+        except Exception:
+            # Let callers handle fallback
+            raise
+
+
+# Initialize limiters: prefer Redis when configured, otherwise in-memory.
+_inmemory_limiter = RateLimiter(calls=300, period=60)
+_redis_limiter = RedisRateLimiter(getattr(settings, "REDIS_URL", None), calls=300, period=60)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client = request.client.host if request.client else "unknown"
+    # Try Redis-based limiter first
+    try:
+        allowed = await _redis_limiter.is_allowed(client)
+    except Exception:
+        # Redis unavailable — fall back to in-memory limiter
+        allowed = _inmemory_limiter.is_allowed(client)
+
+    if not allowed:
+        return JSONResponse({"detail": "Too Many Requests"}, status_code=429)
+    return await call_next(request)
+
+# Configure CORS using environment-configured allowlist
+allow_origins = settings.allowed_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global exception handlers
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    logger.exception("HTTP error: %s", exc)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.exception("Validation error: %s", exc)
+    return JSONResponse({"detail": exc.errors()}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 PREFIX = settings.API_V1_STR
 
@@ -48,7 +190,49 @@ app.include_router(analytics_router,     prefix=f"{PREFIX}/analytics",     tags=
 
 @app.on_event("startup")
 def startup():
+    # Enforce required production settings
+    try:
+        ensure_production_settings()
+    except Exception as e:
+        # Re-raise so the process fails fast in production
+        logging.getLogger(__name__).error("Production configuration error: %s", e)
+        raise
+
     Base.metadata.create_all(bind=engine)
+
+
+@app.on_event("shutdown")
+def shutdown():
+    try:
+        # Dispose the SQLAlchemy engine pool gracefully
+        engine.dispose()
+        logger.info("Engine disposed, shutdown complete")
+    except Exception:
+        logger.exception("Error during shutdown")
+
+
+@app.get("/health", tags=["Health"])
+def health():
+    # Basic app-level health check
+    return {"status": "ok", "uptime": time.time()}
+
+
+@app.get("/live", tags=["Health"])
+def live():
+    # Liveness probe — application is alive
+    return {"status": "alive"}
+
+
+@app.get("/ready", tags=["Health"])
+def ready():
+    # Readiness probe — check DB connectivity
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.exception("Readiness check failed: %s", e)
+        return JSONResponse({"status": "not ready"}, status_code=503)
+    return {"status": "ready"}
 
 @app.get("/", tags=["Health"])
 def root():

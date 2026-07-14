@@ -24,7 +24,11 @@ class OpenAIProvider(BaseProvider):
     provider_name = "openai"
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        if not settings.OPENAI_API_KEY:
+            logger.warning("OpenAI API key not configured; OpenAIProvider will be unavailable")
+            self._client = None
+        else:
+            self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -52,6 +56,9 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int = 2048,
         **kwargs,
     ) -> CompletionResponse:
+        if not self._client:
+            raise RuntimeError("OpenAI provider not configured. Set OPENAI_API_KEY to enable it.")
+
         response = await self._client.chat.completions.create(
             model=model,
             messages=self._to_openai_messages(messages),
