@@ -1,5 +1,43 @@
 {
   "project": "WSAI-BaaS",
+  "description": "Railway configuration file (informational). Connect this repository to Railway and create services using the paths below.",
+  "services": [
+    {
+      "name": "backend",
+      "path": "./backend",
+      "build": "docker",
+      "dockerfile": "Dockerfile",
+      "env": [
+        "POSTGRES_SERVER",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+        "POSTGRES_PORT",
+        "REDIS_URL",
+        "QDRANT_URL",
+        "QDRANT_API_KEY",
+        "SECRET_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "CLAUDE_API_KEY",
+        "OLLAMA_BASE_URL",
+        "NEXT_PUBLIC_API_URL"
+      ]
+    },
+    {
+      "name": "frontend",
+      "path": "./frontend",
+      "build": "docker",
+      "dockerfile": "Dockerfile",
+      "env": [
+        "NEXT_PUBLIC_API_URL"
+      ]
+    }
+  ],
+  "notes": "This file is informational and helps you provision services on Railway. It does not automatically deploy — use the provided GitHub Actions workflow for automated deploys once you add Railway secrets."
+}
+{
+  "project": "WSAI-BaaS",
   "services": [
     {
       "name": "backend",
