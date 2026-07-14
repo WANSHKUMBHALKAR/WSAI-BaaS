@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { agentService } from "@/services/api";
 
-const PROJECT_ID = "demo-project-id"; // in production this comes from the workspace context
+const PROJECT_ID = "00000000-0000-0000-0000-000000000000"; // placeholder workspace UUID for local demos
 
 export default function AgentsPage() {
   const [showCreate, setShowCreate] = useState(false);

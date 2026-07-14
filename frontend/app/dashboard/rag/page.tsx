@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ragService } from "@/services/api";
 
-const PROJECT_ID = "demo-project-id";
+const PROJECT_ID = "00000000-0000-0000-0000-000000000000";
 
 export default function RAGPage() {
   const [question, setQuestion] = useState("");
