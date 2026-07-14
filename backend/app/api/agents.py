@@ -45,7 +45,12 @@ def create_agent(req: AgentCreate, db: Session = Depends(get_db)):
 
 @router.get("/")
 def list_agents(project_id: str, db: Session = Depends(get_db)):
-    agents = db.query(Agent).filter(Agent.project_id == project_id).all()
+    try:
+        pid = uuidlib.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+
+    agents = db.query(Agent).filter(Agent.project_id == pid).all()
 
     return [
         {
@@ -59,7 +64,12 @@ def list_agents(project_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{agent_id}")
 def get_agent(agent_id: str, db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    try:
+        aid = uuidlib.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent_id")
+
+    agent = db.query(Agent).filter(Agent.id == aid).first()
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -89,7 +99,12 @@ async def chat_with_agent(
     db: Session = Depends(get_db),
 ):
     # Find agent
-    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    try:
+        aid = uuidlib.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent_id")
+
+    agent = db.query(Agent).filter(Agent.id == aid).first()
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

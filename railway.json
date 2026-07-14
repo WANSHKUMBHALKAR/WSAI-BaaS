@@ -1,0 +1,16 @@
+{
+  "project": "WSAI-BaaS",
+  "services": [
+    {
+      "name": "backend",
+      "type": "container",
+      "dockerfilePath": "backend/Dockerfile",
+      "env": [
+        "DATABASE_URL",
+        "SECRET_KEY",
+        "OPENAI_API_KEY",
+        "REDIS_URL"
+      ]
+    }
+  ]
+}

@@ -19,7 +19,12 @@ class GeminiProvider(BaseProvider):
     provider_name = "gemini"
 
     def __init__(self) -> None:
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+        if not settings.GEMINI_API_KEY:
+            logger.warning("Gemini API key not configured; GeminiProvider will be unavailable")
+            self._configured = False
+        else:
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            self._configured = True
 
     @staticmethod
     def _convert_messages(messages: list[ChatMessage]) -> tuple[str, list[dict]]:
@@ -44,6 +49,9 @@ class GeminiProvider(BaseProvider):
         max_tokens: int = 2048,
         **kwargs,
     ) -> CompletionResponse:
+        if not getattr(self, "_configured", True):
+            raise RuntimeError("Gemini provider not configured. Set GEMINI_API_KEY to enable it.")
+
         system_instruction, history = self._convert_messages(messages)
         cfg = genai.types.GenerationConfig(
             temperature=temperature,

@@ -24,11 +24,21 @@ class ClaudeProvider(BaseProvider):
 
     def __init__(self) -> None:
         self._api_key = settings.CLAUDE_API_KEY
-        self._headers = {
-            "x-api-key": self._api_key or "",
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        if not self._api_key:
+            logger.warning("Claude API key not configured; ClaudeProvider will be unavailable")
+            self._available = False
+            self._headers = {
+                "x-api-key": "",
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
+        else:
+            self._available = True
+            self._headers = {
+                "x-api-key": self._api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
 
     @staticmethod
     def _split_messages(messages: list[ChatMessage]) -> tuple[str, list[dict]]:
@@ -48,6 +58,9 @@ class ClaudeProvider(BaseProvider):
         max_tokens: int = 2048,
         **kwargs,
     ) -> CompletionResponse:
+        if not getattr(self, "_available", True) and settings.ENVIRONMENT.lower() == "production":
+            raise RuntimeError("Claude provider not configured. Set CLAUDE_API_KEY to enable it.")
+
         system, convo = self._split_messages(messages)
         payload = {
             "model": model,

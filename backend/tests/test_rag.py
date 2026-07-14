@@ -3,6 +3,18 @@ from unittest.mock import MagicMock, patch
 from app.rag.parsers import parse_pdf, parse_docx, parse_text
 from app.rag.chunking import chunk_fixed, chunk_recursive
 
+# Provide lightweight shims for optional heavy dependencies so tests
+# can run in environments where PyMuPDF (`fitz`) or python-docx (`docx`) are not installed.
+import sys
+import types
+
+for _mod in ("fitz", "docx"):
+    if _mod not in sys.modules:
+        sys.modules[_mod] = types.ModuleType(_mod)
+    # Provide minimal symbols expected by the tests so patching works
+    if _mod == "docx":
+        setattr(sys.modules[_mod], "Document", lambda *a, **k: None)
+
 def test_parse_text():
     raw_bytes = b"Hello, this is a test text file."
     res = parse_text(raw_bytes)

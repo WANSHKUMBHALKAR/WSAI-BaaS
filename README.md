@@ -43,3 +43,10 @@ docker-compose up --build
 - `/frontend`: The Next.js dashboard
 - `/deployment`: Docker configurations
 - `/sdk`: Future SDKs for Python/JS
+
+## CI / Deployment
+
+- A GitHub Actions workflow runs backend tests and builds the frontend on push to `main` ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+- Frontend deployment instructions for Vercel are in [DEPLOYMENT_VERCEL.md](DEPLOYMENT_VERCEL.md).
+
+If you'd like, I can also create a one-click `render.yaml` for deploying the backend to Render or add instructions to deploy the backend to Railway.
