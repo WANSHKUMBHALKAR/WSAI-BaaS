@@ -7,6 +7,8 @@ import logging
 import time
 import threading
 from typing import Dict
+import asyncio
+from urllib.parse import urlparse
 from sqlalchemy import text
 
 from app.core.config import settings, ensure_production_settings
@@ -80,12 +82,64 @@ class RateLimiter:
             q.append(now)
             return True
 
-limiter = RateLimiter(calls=300, period=60)
+
+class RedisRateLimiter:
+    """Simple Redis-backed fixed-window limiter using INCR+EXPIRE.
+
+    This is production-friendly and performs a single INCR command per request.
+    It falls back to the in-memory limiter if Redis is unavailable.
+    """
+    def __init__(self, redis_url: str | None, calls: int = 300, period: int = 60):
+        self.redis_url = redis_url
+        self.calls = calls
+        self.period = period
+        self._client = None
+
+    async def _get_client(self):
+        if self._client is not None:
+            return self._client
+        if not self.redis_url:
+            raise RuntimeError("No REDIS_URL configured")
+        try:
+            import redis.asyncio as aioredis
+
+            self._client = await aioredis.from_url(self.redis_url, decode_responses=True)
+            return self._client
+        except Exception:
+            self._client = None
+            raise
+
+    async def is_allowed(self, key: str) -> bool:
+        """Return True if allowed, False if rate limit exceeded."""
+        try:
+            client = await self._get_client()
+            rkey = f"rl:{key}"
+            # INCR and set expiry if first increment
+            cur = await client.incr(rkey)
+            if cur == 1:
+                await client.expire(rkey, self.period)
+            return cur <= self.calls
+        except Exception:
+            # Let callers handle fallback
+            raise
+
+
+# Initialize limiters: prefer Redis when configured, otherwise in-memory.
+_inmemory_limiter = RateLimiter(calls=300, period=60)
+_redis_limiter = RedisRateLimiter(getattr(settings, "REDIS_URL", None), calls=300, period=60)
+
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     client = request.client.host if request.client else "unknown"
-    if not limiter.is_allowed(client):
+    # Try Redis-based limiter first
+    try:
+        allowed = await _redis_limiter.is_allowed(client)
+    except Exception:
+        # Redis unavailable — fall back to in-memory limiter
+        allowed = _inmemory_limiter.is_allowed(client)
+
+    if not allowed:
         return JSONResponse({"detail": "Too Many Requests"}, status_code=429)
     return await call_next(request)
 
