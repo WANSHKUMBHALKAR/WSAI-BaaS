@@ -26,10 +26,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/wsai
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=wsai
+      - POSTGRES_PORT=5432
       - REDIS_URL=redis://redis:6379/0
       - QDRANT_URL=http://qdrant:6333
-      - RUN_MIGRATIONS=true
+      - RUN_MIGRATIONS=false
     depends_on:
       - postgres
       - redis
