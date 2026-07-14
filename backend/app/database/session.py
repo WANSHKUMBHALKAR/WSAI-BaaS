@@ -18,6 +18,10 @@ try:
         # If connection test fails, raise to trigger fallback
         raise
 except Exception as exc:
+    # In production we should fail fast instead of silently falling back.
+    if getattr(settings, "ENVIRONMENT", "development").lower() == "production":
+        logger.error("Database connection failed in production: %s", exc)
+        raise
     logger.warning("Database connection failed (%s). Falling back to file-based SQLite for tests.", exc)
     # Use a file-backed SQLite DB to ensure the database is shared across connections
     engine = create_engine("sqlite:///./backend_test.db", connect_args={"check_same_thread": False})
